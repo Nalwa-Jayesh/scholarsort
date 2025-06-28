@@ -1,8 +1,10 @@
+import importlib.util
 import re
 
 import nltk
 import spacy
 from nltk.corpus import stopwords
+from spacy.cli import download
 
 # Download stopwords if not ready
 nltk.download("stopwords")
@@ -12,6 +14,9 @@ STOPWORDS = set(stopwords.words("english"))
 
 # Load spaCy English model for lemmatization
 # only tokenizer + tagger
+if not importlib.util.find_spec("en_core_web_sm"):
+    download("en_core_web_sm")
+
 nlp = spacy.load("en_core_web_sm", disable=["ner", "parser"])
 
 
