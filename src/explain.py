@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import streamlit as st
 from typing import List, Dict, Any, Optional
+from lime.lime_text import LimeTextExplainer
 
 # Try to import SHAP
 try:
@@ -30,12 +31,14 @@ class ModelExplainer:
     SHAP-based explainability class for scientific paper classification
     """
     
-    def __init__(self, model, vectorizer=None, label_binarizer=None, method="tfidf"):
+    def __init__(self, model, vectorizer=None, label_binarizer=None, method="tfidf", svd=None, scaler=None):
         self.model = model
         self.vectorizer = vectorizer
         self.label_binarizer = label_binarizer
         self.method = method
         self.shap_explainer = None
+        self.svd = svd
+        self.scaler = scaler
         
     def explain_with_shap(self, text: str, num_features: int = 10) -> Dict[str, Any]:
         """
@@ -73,8 +76,12 @@ class ModelExplainer:
         cleaned = clean_text(text)
         X = transform_with_tfidf(self.vectorizer, [cleaned])
         
-        # Get feature names
-        feature_names = self.vectorizer.get_feature_names_out()
+        # If SVD and scaler are present (SVM), apply them
+        if self.svd is not None and self.scaler is not None:
+            X = self.scaler.transform(self.svd.transform(X))
+            feature_names = [f"SVD_{i}" for i in range(X.shape[1])]
+        else:
+            feature_names = self.vectorizer.get_feature_names_out()
         
         # Process results - handle different SHAP output formats
         explanations = {}
@@ -389,9 +396,9 @@ class ModelExplainer:
         return explanations
 
 
-def create_explainer(model, vectorizer=None, label_binarizer=None, method="tfidf"):
+def create_explainer(model, vectorizer=None, label_binarizer=None, method="tfidf", svd=None, scaler=None):
     """Factory function to create SHAP explainer"""
-    return ModelExplainer(model, vectorizer, label_binarizer, method)
+    return ModelExplainer(model, vectorizer, label_binarizer, method, svd, scaler)
 
 
 def display_explanation_streamlit(explanation: Dict[str, Any]):
@@ -400,32 +407,36 @@ def display_explanation_streamlit(explanation: Dict[str, Any]):
     st.subheader("🔍 SHAP Explanation")
     
     if isinstance(explanation, dict) and 'positive' in list(explanation.values())[0]:
-        # TF-IDF SHAP explanation
         for class_name, class_explanation in explanation.items():
             st.write(f"**{class_name}:**")
-            
+            shown = False
             if class_explanation['positive']:
                 st.write("🟢 **Positive features:**")
                 for feature, weight in class_explanation['positive'][:5]:
                     st.write(f"   • {feature}: {weight:.3f}")
-            
+                shown = True
             if class_explanation['negative']:
                 st.write("🔴 **Negative features:**")
                 for feature, weight in class_explanation['negative'][:5]:
                     st.write(f"   • {feature}: {weight:.3f}")
-            
+                shown = True
+            # If nothing shown, show overall
+            if not shown and class_explanation.get('overall'):
+                st.write("ℹ️ **Top features (all zero or neutral):**")
+                for feature, weight in class_explanation['overall'][:5]:
+                    st.write(f"   • {feature}: {weight:.3f}")
             st.write("---")
     
     else:
-        # SBERT SHAP explanation
+        # SBERT SHAP explanation or fallback
         for class_name, class_explanation in explanation.items():
-            st.write(f"**{class_name}:** {class_explanation['importance']:.3f}")
+            st.write(f"**{class_name}:** {class_explanation.get('importance', 0):.3f}")
 
 
-def generate_explanation(text: str, model, vectorizer=None, label_binarizer=None, method="tfidf"):
+def generate_explanation(text: str, model, vectorizer=None, label_binarizer=None, method="tfidf", svd=None, scaler=None):
     """Generate SHAP explanation for any model"""
     try:
-        explainer = create_explainer(model, vectorizer, label_binarizer, method)
+        explainer = create_explainer(model, vectorizer, label_binarizer, method, svd, scaler)
         return explainer.explain_with_shap(text, num_features=10)
     except Exception as e:
         return f"Error generating explanation: {str(e)}"
@@ -444,4 +455,40 @@ def get_or_create_sbert_background_embeddings(path="models/sbert_background_embe
         os.makedirs(os.path.dirname(path), exist_ok=True)
         np.save(path, embeddings)
         print(f"[SHAP] Saved background embeddings to {path}")
-        return embeddings 
+        return embeddings
+
+
+def explain_with_lime(text, model, label_binarizer, get_sbert_embeddings_func, num_features=10):
+    """
+    Generate a LIME explanation for SBERT-based models.
+    """
+    class_names = list(label_binarizer.classes_)
+
+    def predict_proba(texts):
+        X = get_sbert_embeddings_func(texts)
+        return model.predict_proba(X)
+
+    explainer = LimeTextExplainer(class_names=class_names)
+    exp = explainer.explain_instance(
+        text,
+        predict_proba,
+        num_features=num_features,
+        labels=list(range(len(class_names)))
+    )
+    explanations = {}
+    for i, class_name in enumerate(class_names):
+        words_weights = exp.as_list(label=i)
+        explanations[class_name] = {
+            'top_words': words_weights
+        }
+    return explanations
+
+
+def display_lime_explanation_streamlit(explanation: Dict[str, Any]):
+    st.subheader("🟢 LIME Explanation (Word-level)")
+    for class_name, class_explanation in explanation.items():
+        st.write(f"**{class_name}:**")
+        for word, weight in class_explanation['top_words'][:5]:
+            color = "green" if weight > 0 else "red"
+            st.markdown(f"<span style='color:{color}'>• {word}: {weight:.3f}</span>", unsafe_allow_html=True)
+        st.write("---") 

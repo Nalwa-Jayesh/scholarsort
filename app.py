@@ -7,9 +7,9 @@ from sklearn.decomposition import TruncatedSVD
 from sklearn.preprocessing import StandardScaler
 
 from src import config
-from src.features import transform_with_tfidf
+from src.features import transform_with_tfidf, get_sbert_embeddings
 from src.preprocess import clean_text
-from src.explain import create_explainer, display_explanation_streamlit
+from src.explain import create_explainer, display_explanation_streamlit, explain_with_lime, display_lime_explanation_streamlit
 
 # === Setup ===
 st.set_page_config(page_title="Scientific Paper Categorizer", layout="centered")
@@ -75,31 +75,35 @@ def predict_labels(abstract_text, model_name):
 
 
 # === SHAP Explanation ===
-def generate_explanation(abstract_text, model_name):
-    """Generate SHAP explanation using advanced explainability"""
+def generate_explanation(abstract_text, model_name, svd=None, scaler=None):
+    """Generate explanation using SHAP (TF-IDF) or LIME (SBERT)"""
     try:
-        # Determine the method type
         method_type = "tfidf" if "tfidf" in model_name else "sbert"
-        
-        # Create explainer
-        explainer = create_explainer(
-            model=model,
-            vectorizer=vectorizer,
-            label_binarizer=label_binarizer,
-            method=method_type
-        )
-        
-        # Generate explanation
-        explanation = explainer.explain_with_shap(abstract_text, num_features=10)
-        
-        # Display explanation
-        display_explanation_streamlit(explanation)
-        
-        return explanation
-        
+        if method_type == "sbert":
+            explanation = explain_with_lime(
+                abstract_text,
+                model,
+                label_binarizer,
+                get_sbert_embeddings_func=get_sbert_embeddings,
+                num_features=10
+            )
+            display_lime_explanation_streamlit(explanation)
+            return explanation
+        else:
+            explainer = create_explainer(
+                model=model,
+                vectorizer=vectorizer,
+                label_binarizer=label_binarizer,
+                method=method_type,
+                svd=svd,
+                scaler=scaler
+            )
+            explanation = explainer.explain_with_shap(abstract_text, num_features=10)
+            display_explanation_streamlit(explanation)
+            return explanation
     except Exception as e:
-        st.error(f"❌ SHAP explanation error: {str(e)}")
-        st.info("💡 SHAP requires installation: `pip install shap`")
+        st.error(f"❌ Explanation error: {str(e)}")
+        st.info("💡 SHAP and LIME require installation: `pip install shap lime`.")
         return None
 
 
@@ -121,7 +125,7 @@ if st.button("🎯 Predict"):
             # Generate SHAP explanation if requested
             if show_explanation:
                 st.write("---")
-                generate_explanation(abstract, model_choice)
+                generate_explanation(abstract, model_choice, svd=svd, scaler=scaler)
                 
         except Exception as e:
             st.error(f"❌ Prediction error: {str(e)}")
