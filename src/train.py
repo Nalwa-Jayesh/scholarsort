@@ -4,11 +4,12 @@ import joblib
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import classification_report
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold
 from sklearn.multiclass import OneVsRestClassifier
 from sklearn.neural_network import MLPClassifier
-from sklearn.preprocessing import MultiLabelBinarizer
+from sklearn.preprocessing import MultiLabelBinarizer, StandardScaler
 from sklearn.svm import LinearSVC
+from sklearn.decomposition import TruncatedSVD
 
 from . import config
 from .augment import augment_abstract
@@ -34,13 +35,22 @@ def train_models(
 
     # Define models
     models = {}
+    preprocessing_components = {}
+    
     if method == "tfidf":
         models["logistic_regression"] = OneVsRestClassifier(
             LogisticRegression(max_iter=1000, class_weight="balanced")
         )
+        
+        # For SVM, we'll need to save preprocessing components
         models["svm"] = OneVsRestClassifier(
             LinearSVC(max_iter=2000, class_weight="balanced")
         )
+        # Create preprocessing components for SVM
+        svd = TruncatedSVD(n_components=300, random_state=42)
+        scaler = StandardScaler()
+        preprocessing_components["svm"] = {"svd": svd, "scaler": scaler}
+        
     elif method == "sbert":
         models["logistic_regression"] = OneVsRestClassifier(
             LogisticRegression(max_iter=1000)
@@ -51,11 +61,29 @@ def train_models(
     else:
         raise ValueError("Unknown method. Use 'tfidf' or 'sbert'")
 
-    # Train and evaluate
+    # Train and evaluate with cross-validation
     for name, model in models.items():
         print(f"\n🔧 Training {name}...")
-        model.fit(X_train, y_train)
-        y_pred = model.predict(X_test)
+        
+        # Apply preprocessing if needed
+        X_train_processed = X_train.copy()
+        X_test_processed = X_test.copy()
+        
+        if name == "svm" and method == "tfidf":
+            # Fit preprocessing on training data
+            svd = preprocessing_components["svm"]["svd"]
+            scaler = preprocessing_components["svm"]["scaler"]
+            X_train_processed = scaler.fit_transform(svd.fit_transform(X_train))
+            X_test_processed = scaler.transform(svd.transform(X_test))
+        
+        # Cross-validation for more robust evaluation
+        print(f"🔄 Performing 5-fold cross-validation...")
+        cv_scores = cross_val_score(model, X_train_processed, y_train, cv=5, scoring='accuracy')
+        print(f"Cross-validation accuracy: {cv_scores.mean():.4f} (+/- {cv_scores.std() * 2:.4f})")
+        
+        # Train on full training set
+        model.fit(X_train_processed, y_train)
+        y_pred = model.predict(X_test_processed)
 
         print(f"\n📊 Evaluation for {name}:")
         report = classification_report(
@@ -68,6 +96,15 @@ def train_models(
         model_path = os.path.join(output_dir, f"{method}_{name}.pkl")
         joblib.dump(model, model_path)
         print(f"✅ Saved model to {model_path}")
+        
+        # Save preprocessing components for SVM
+        if name == "svm" and method == "tfidf":
+            svd_path = os.path.join(output_dir, f"{method}_{name}_svd.pkl")
+            scaler_path = os.path.join(output_dir, f"{method}_{name}_scaler.pkl")
+            joblib.dump(preprocessing_components["svm"]["svd"], svd_path)
+            joblib.dump(preprocessing_components["svm"]["scaler"], scaler_path)
+            print(f"✅ Saved SVD component to {svd_path}")
+            print(f"✅ Saved scaler component to {scaler_path}")
 
     # Save label binarizer
     label_path = os.path.join(output_dir, "multi_label_binarizer.pkl")

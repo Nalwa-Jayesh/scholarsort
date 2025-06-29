@@ -3,6 +3,7 @@ from typing import List, Tuple, Union
 
 import joblib
 from sklearn.feature_extraction.text import TfidfVectorizer
+import numpy as np
 
 from . import config
 
@@ -110,3 +111,16 @@ def extract_features(
         return extract_sbert(texts, model_name, models_dir, device)
     else:
         raise ValueError("Method must be 'tfidf' or 'sbert'")
+
+
+def get_sbert_embeddings(texts: List[str], model_name: str = "all-MiniLM-L6-v2") -> np.ndarray:
+    """Get SBERT embeddings for texts using the local model"""
+    from sentence_transformers import SentenceTransformer
+    
+    local_model_path = config.sbert_model_path(model_name)
+    if os.path.exists(local_model_path):
+        model = SentenceTransformer(local_model_path, device="cpu")
+    else:
+        model = SentenceTransformer(model_name, device="cpu")
+    
+    return model.encode(texts, show_progress_bar=False, convert_to_tensor=False)

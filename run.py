@@ -1,6 +1,6 @@
 import argparse
 
-from src import evaluate, predict, train
+from src import evaluate, predict, train, summary
 
 
 def main():
@@ -8,7 +8,7 @@ def main():
         description="Scientific Paper Categorizer - Pipeline Runner"
     )
     parser.add_argument(
-        "--task", choices=["train", "evaluate", "predict"], required=True
+        "--task", choices=["train", "evaluate", "predict", "summary"], required=True
     )
     parser.add_argument(
         "--method",
@@ -38,6 +38,10 @@ def main():
             abstract=args.abstract, model_name=model_name, method=args.method
         )
         print(f"📄 Predicted Categories: {', '.join(result)}")
+        
+    elif args.task == "summary":
+        print("📊 Generating performance summary...")
+        summary.main()
 
 
 if __name__ == "__main__":
