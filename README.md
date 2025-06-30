@@ -52,7 +52,7 @@ scholarsort/
 
 ```bash
 # Clone the repository
-git clone <repository-url>
+git clone https://www.github.com/Nalwa-Jayesh/scholarsort 
 cd scholarsort
 
 # Install dependencies
